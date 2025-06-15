@@ -1,0 +1,1 @@
+global_setup = "local"  # Default setup, can be overridden by the user
