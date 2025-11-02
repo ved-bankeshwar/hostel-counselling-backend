@@ -7,10 +7,10 @@ from typing import Optional, List, Dict, Any
 # Database connection parameters
 DB_CONFIG = {
     'host': 'localhost',
-    'port': 5433,
+    'port': 5432,
     'database': 'room_counselling',
     'user': 'admin',
-    'password': 'admin'
+    'password': 'admin123'
 }
 
 
@@ -26,8 +26,8 @@ def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            INSERT INTO "User" (name, email, "passwordHash", "registrationNumber", gender, rank, hostel, "isActive")
-            VALUES (%(name)s, %(email)s, %(passwordHash)s, %(registrationNumber)s, %(gender)s, %(rank)s, %(hostel)s, %(isActive)s)
+            INSERT INTO "User" (name, email, "passwordHash", "registrationNumber", gender, rank, hostel, "isActive", role)
+            VALUES (%(name)s, %(email)s, %(passwordHash)s, %(registrationNumber)s, %(gender)s, %(rank)s, %(hostel)s, %(isActive)s, %(role)s)
             RETURNING *
             """,
             {
@@ -39,6 +39,7 @@ def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
                 'rank': data['rank'],
                 'hostel': data['hostel'],
                 'isActive': data.get('isActive', True),
+                'role': data.get('role', 'user'),
             }
         )
         user = dict(cursor.fetchone())

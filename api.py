@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body, status
+from fastapi import FastAPI, HTTPException, Body, status, Header, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from dbconfig import (
@@ -15,12 +15,20 @@ from dbconfig import (
     room,
     room_assignment
 )
+from firebase_auth import router as firebase_auth_router, verify_firebase_token
+from friend_requests import router as friend_requests_router, get_user_by_firebase_uid
+from allocation import router as allocation_router
 
 app = FastAPI(
     title="Hostel Room Counselling API",
-    description="API for hostel room allocation system with dual-queue architecture",
+    description="API for hostel room allocation system with dual-queue architecture and Firebase authentication",
     version="1.0.0"
 )
+
+# Include routers
+app.include_router(firebase_auth_router)
+app.include_router(friend_requests_router)
+app.include_router(allocation_router)
 
 # ==================== Pydantic Models ====================
 
@@ -230,6 +238,47 @@ def delete_preference_endpoint(preference_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/api/preferences/lock", tags=["Preference"])
+async def lock_user_preferences(token_data: dict = Depends(verify_firebase_token)):
+    """Lock all preferences for the current user"""
+    try:
+        from dbconfig.user import get_connection
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get user ID from firebase UID
+        cursor.execute('SELECT id FROM "User" WHERE "firebaseUid" = %s', (token_data["uid"],))
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user_id = user["id"]
+        
+        # Update all preferences for this user to locked status
+        cursor.execute(
+            """UPDATE "Preference" SET "isLocked" = true WHERE "userId" = %s RETURNING *""",
+            (user_id,)
+        )
+        
+        locked_preferences = cursor.fetchall()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {
+            "success": True,
+            "message": "Preferences locked successfully",
+            "data": [dict(p) for p in locked_preferences],
+            "count": len(locked_preferences)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to lock preferences: {str(e)}")
 # ==================== Roommate Approval Management Endpoints ====================
 
 @app.get("/api/approvals/{user_id}", tags=["Approval"])
@@ -242,10 +291,10 @@ def get_user_approvals(user_id: int):
         
         conn = psycopg2.connect(
             host='localhost',
-            port=5433,
+            port=5432,
             database='room_counselling',
             user='admin',
-            password='admin'
+            password='admin123'
         )
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
@@ -280,10 +329,10 @@ def get_pending_approvals_endpoint(user_id: int):
         
         conn = psycopg2.connect(
             host='localhost',
-            port=5433,
+            port=5432,
             database='room_counselling',
             user='admin',
-            password='admin'
+            password='admin123'
         )
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
@@ -523,6 +572,57 @@ def update_counselling_session_rank(session_id: int, data: dict = Body(...)):
         return {"error": "Missing rank"}
     return counselling_session.update_current_rank(session_id, rank, user_id)
 
+
+@app.get("/counselling-session/{session_id}/turn-info")
+def get_counselling_turn_info(session_id: int):
+    """Expose current turn information (including remaining seconds) for a session."""
+    try:
+        info = counselling_session.get_current_turn_info(session_id)
+        if not info:
+            raise HTTPException(status_code=404, detail="Session or turn info not found")
+        return {"success": True, "data": info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/counselling/{session_id}/is-my-turn")
+async def is_my_turn(session_id: int, authorization: str = Header(None)):
+    """Check if the authenticated user currently has the turn for the given session.
+
+    Returns remaining seconds and a boolean `isMyTurn`.
+    """
+    try:
+        # Verify Firebase token and map to user
+        decoded = await verify_firebase_token(authorization)
+        current_user = get_user_by_firebase_uid(decoded['uid'])
+        if not current_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        info = counselling_session.get_current_turn_info(session_id)
+        if not info:
+            return {"success": True, "isMyTurn": False, "message": "No active turn info"}
+
+        is_my_turn = False
+        # Prefer explicit currentUserId if set, otherwise compare ranks
+        if info.get('currentUserId'):
+            is_my_turn = (info.get('currentUserId') == current_user['id'])
+        else:
+            is_my_turn = (info.get('currentRank') == current_user.get('rank'))
+
+        return {
+            "success": True,
+            "isMyTurn": is_my_turn,
+            "remainingSeconds": info.get('remainingSeconds'),
+            "currentRank": info.get('currentRank'),
+            "currentUserId": info.get('currentUserId')
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Queue Management Endpoints
 @app.post("/queue/turn")
 def add_to_turn_queue(data: dict):
@@ -606,3 +706,54 @@ def check_room_lock_status(room_id: int):
 @app.delete("/room-lock/{lock_id}")
 def remove_room_lock(lock_id: int):
     return room_lock.remove_lock(lock_id)
+
+
+# ==================== TEST ENDPOINT (REMOVE IN PRODUCTION) ====================
+# This endpoint bypasses Firebase authentication for development testing only
+# ⚠️ REMOVE THIS BEFORE DEPLOYING TO PRODUCTION!
+
+class TestLoginRequest(BaseModel):
+    email: str = Field(..., description="Email of the user")
+
+@app.post("/api/auth/test-login", tags=["auth"], deprecated=True)
+async def test_login_no_firebase(request: TestLoginRequest):
+    """
+    TEST ONLY - Login without Firebase token.
+    This endpoint bypasses Firebase authentication for testing.
+    
+    ⚠️ REMOVE THIS BEFORE DEPLOYING TO PRODUCTION!
+    """
+    from dbconfig.user import get_connection
+    from psycopg2.extras import RealDictCursor
+    from datetime import datetime
+    
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute('SELECT * FROM "User" WHERE email = %s', (request.email,))
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update last login
+        cursor.execute(
+            'UPDATE "User" SET "lastLoginAt" = %s WHERE email = %s RETURNING *',
+            (datetime.utcnow(), request.email)
+        )
+        user = dict(cursor.fetchone())
+        conn.commit()
+        cursor.close()
+        
+        return {
+            "success": True,
+            "data": user,
+            "message": "⚠️ TEST LOGIN - No authentication required",
+            "warning": "This endpoint should be removed in production"
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        conn.close()
+

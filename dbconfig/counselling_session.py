@@ -7,10 +7,10 @@ from typing import Optional, List, Dict, Any
 # Database connection parameters
 DB_CONFIG = {
     'host': 'localhost',
-    'port': 5433,
+    'port': 5432,
     'database': 'room_counselling',
     'user': 'admin',
-    'password': 'admin'
+    'password': 'admin123'
 }
 
 def get_connection():

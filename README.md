@@ -1,13 +1,14 @@
 # Hostel Room Counselling API
 
-A FastAPI-based backend system for managing hostel room allocation using a dual-queue counselling system. This API provides comprehensive endpoints for managing hostels, rooms, friendships, preferences, approvals, and the counselling process.
+A FastAPI-based backend system for managing hostel room allocation using a dual-queue counselling system with Firebase Google Authentication. This API provides comprehensive endpoints for managing hostels, rooms, friendships, preferences, approvals, and the counselling process.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.8+
 - PostgreSQL (running via Docker)
-- Required Python packages: `fastapi`, `uvicorn`, `psycopg2-binary`, `pydantic`
+- Firebase project with Google Sign-In enabled
+- Required Python packages: `fastapi`, `uvicorn`, `psycopg2-binary`, `pydantic`, `firebase-admin`
 
 ### Setup
 
@@ -16,27 +17,85 @@ A FastAPI-based backend system for managing hostel room allocation using a dual-
 docker-compose up -d
 ```
 
-2. **Load Sample Data**
+2. **Configure Firebase Authentication**
+- Download `serviceAccountKey.json` from Firebase Console
+- Place it in the project root directory
+- See [FIREBASE_SETUP.md](FIREBASE_SETUP.md) for detailed instructions
+
+3. **Load Sample Data**
 ```bash
 python load_sample_data.py
 ```
 
-3. **Start the API Server**
+4. **Start the API Server**
 ```bash
 python -m uvicorn api:app --reload --port 8000
 ```
 
-4. **Access API Documentation**
+5. **Access API Documentation**
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
 ## 📊 Database Configuration
 
 - **Host:** localhost
-- **Port:** 5433
+- **Port:** 5432
 - **Database:** room_counselling
 - **Username:** admin
-- **Password:** admin
+- **Password:** admin123
+
+## 🔐 Firebase Authentication
+
+The system uses Firebase Google Sign-In for user authentication. All authenticated endpoints require a Firebase ID token in the Authorization header.
+
+### Frontend Integration Example
+
+```javascript
+// 1. User signs in with Google via Firebase (Frontend)
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+
+const signInWithGoogle = async () => {
+  const provider = new GoogleAuthProvider();
+  const result = await signInWithPopup(auth, provider);
+  const user = result.user;
+  
+  // 2. Get Firebase ID token
+  const idToken = await user.getIdToken();
+  
+  // 3. Send to backend
+  const response = await fetch('http://localhost:8000/api/auth/firebase', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${idToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      firebaseUid: user.uid,
+      email: user.email,
+      displayName: user.displayName
+    })
+  });
+  
+  const data = await response.json();
+  // data.data contains user profile from database
+  
+  // 4. Store token for future requests
+  localStorage.setItem('firebaseToken', idToken);
+};
+
+// Making authenticated requests
+const getUserProfile = async () => {
+  const idToken = localStorage.getItem('firebaseToken');
+  
+  const response = await fetch('http://localhost:8000/api/auth/me', {
+    headers: {
+      'Authorization': `Bearer ${idToken}`
+    }
+  });
+  
+  return await response.json();
+};
+```
 
 ## 🏗️ System Architecture
 
@@ -46,6 +105,157 @@ The system implements a **dual-queue architecture** for fair room allocation:
 2. **Processing Queue**: Parallel processing of room assignments based on preferences and roommate approvals
 
 ## 📡 API Endpoints
+
+### 🔐 Authentication Endpoints
+
+#### Login/Register with Firebase
+```http
+POST /api/auth/firebase
+```
+Verify Firebase ID token and create/update user in database.
+
+**Headers:**
+```
+Authorization: Bearer <firebase_id_token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "firebaseUid": "abc123xyz...",
+  "email": "student@example.com",
+  "displayName": "John Doe"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "firebaseUid": "abc123xyz...",
+    "email": "student@example.com",
+    "displayName": "John Doe",
+    "registrationNumber": null,
+    "gender": "male",
+    "rank": 1,
+    "hostel": "mens",
+    "isActive": true,
+    "lastLoginAt": "2025-11-02T10:30:00",
+    "createdAt": "2025-01-15T08:00:00"
+  },
+  "message": "User logged in successfully"
+}
+```
+
+**Error Response (401 Unauthorized):**
+```json
+{
+  "detail": "Invalid or expired token"
+}
+```
+
+**Error Response (404 Not Found):**
+```json
+{
+  "detail": "User not found. Please contact administrator to create your account first."
+}
+```
+
+#### Get Current User Profile
+```http
+GET /api/auth/me
+```
+Get the authenticated user's profile information.
+
+**Headers:**
+```
+Authorization: Bearer <firebase_id_token>
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": 1,
+  "firebaseUid": "abc123xyz...",
+  "email": "student@example.com",
+  "displayName": "John Doe",
+  "registrationNumber": "2021CS001",
+  "gender": "male",
+  "rank": 1,
+  "hostel": "mens",
+  "isActive": true,
+  "lastLoginAt": "2025-11-02T10:30:00",
+  "createdAt": "2025-01-15T08:00:00"
+}
+```
+
+#### Update User Profile
+```http
+PATCH /api/auth/me
+```
+Update the authenticated user's profile (registration number, display name).
+
+**Headers:**
+```
+Authorization: Bearer <firebase_id_token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "registrationNumber": "2021CS001",
+  "displayName": "John Doe Updated"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": 1,
+  "firebaseUid": "abc123xyz...",
+  "email": "student@example.com",
+  "displayName": "John Doe Updated",
+  "registrationNumber": "2021CS001",
+  "gender": "male",
+  "rank": 1,
+  "hostel": "mens",
+  "isActive": true,
+  "lastLoginAt": "2025-11-02T10:30:00",
+  "createdAt": "2025-01-15T08:00:00"
+}
+```
+
+#### Get User by Firebase UID
+```http
+GET /api/auth/user/{firebase_uid}
+```
+Get user details by Firebase UID (public endpoint, no authentication required).
+
+**Parameters:**
+- `firebase_uid` (string): Firebase user UID
+
+**Response (200 OK):**
+```json
+{
+  "id": 1,
+  "firebaseUid": "abc123xyz...",
+  "email": "student@example.com",
+  "displayName": "John Doe",
+  "registrationNumber": "2021CS001",
+  "gender": "male",
+  "rank": 1,
+  "hostel": "mens",
+  "isActive": true,
+  "lastLoginAt": "2025-11-02T10:30:00",
+  "createdAt": "2025-01-15T08:00:00"
+}
+```
+
+---
 
 ### 🏨 Hostel Structure Management
 

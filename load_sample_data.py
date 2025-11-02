@@ -8,10 +8,10 @@ import bcrypt
 # Database connection parameters
 DB_CONFIG = {
     'host': 'localhost',
-    'port': 5433,
+    'port': 5432,
     'database': 'room_counselling',
     'user': 'admin',
-    'password': 'admin'
+    'password': 'admin123'
 }
 
 
@@ -60,13 +60,19 @@ def create_tables(conn):
             id SERIAL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             email VARCHAR(255) UNIQUE NOT NULL,
-            "passwordHash" VARCHAR(255) NOT NULL,
-            "registrationNumber" VARCHAR(255) UNIQUE NOT NULL,
+            "passwordHash" VARCHAR(255),
+            "registrationNumber" VARCHAR(255) UNIQUE,
             gender "Gender" NOT NULL,
             rank INTEGER UNIQUE NOT NULL,
             hostel "HostelType" NOT NULL,
             "isActive" BOOLEAN DEFAULT true,
-            "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            "firebaseUid" VARCHAR(255) UNIQUE,
+            "displayName" VARCHAR(255),
+            "photoUrl" TEXT,
+            "provider" VARCHAR(50) DEFAULT 'google',
+            "lastLoginAt" TIMESTAMP,
+            "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     
@@ -257,33 +263,30 @@ def load_rooms(conn):
 
 
 def load_users(conn):
-    """Load sample user data."""
+    """Load sample user data with Firebase UIDs."""
     cursor = conn.cursor()
     
-    # Hash a default password for all users
-    default_password = hash_password("password123")
-    
     users = []
-    # Create 30 male students
+    # Create 30 male students with fake Firebase UIDs for testing
     for i in range(1, 31):
         users.append((
-            f"Male Student {i}",
+            f"firebase_test_male_{i}",  # firebaseUid (fake for testing)
             f"male.student{i}@example.com",
-            default_password,
-            f"MS2024{str(i).zfill(4)}",
+            f"Male Student {i}",  # displayName
+            f"MS2024{str(i).zfill(4)}",  # registrationNumber
             'male',
             i,
             'mens',
             True
         ))
     
-    # Create 30 female students
+    # Create 30 female students with fake Firebase UIDs for testing
     for i in range(1, 31):
         users.append((
-            f"Female Student {i}",
+            f"firebase_test_female_{i}",  # firebaseUid (fake for testing)
             f"female.student{i}@example.com",
-            default_password,
-            f"FS2024{str(i).zfill(4)}",
+            f"Female Student {i}",  # displayName
+            f"FS2024{str(i).zfill(4)}",  # registrationNumber
             'female',
             i + 30,
             'ladies',
@@ -291,7 +294,9 @@ def load_users(conn):
         ))
     
     cursor.executemany(
-        'INSERT INTO "User" (name, email, "passwordHash", "registrationNumber", gender, rank, hostel, "isActive") VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING',
+        '''INSERT INTO "User" (
+            "firebaseUid", email, "displayName", "registrationNumber", gender, rank, hostel, "isActive"
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING''',
         users
     )
     
