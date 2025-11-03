@@ -2,20 +2,16 @@
 
 from . import user
 from . import friendship
-from . import hostel
-from . import block
-from . import floor
 from . import room
 from . import preference
-from . import room_assignment
+from . import counselling_session
+from . import queue_management
 
 __all__ = [
     'user',
     'friendship',
-    'hostel',
-    'block',
-    'floor',
     'room',
     'preference',
-    'room_assignment',
+    'counselling_session',
+    'queue_management',
 ]

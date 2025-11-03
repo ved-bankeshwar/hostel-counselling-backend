@@ -1,0 +1,72 @@
+[
+  {
+    "sr_no": 1,
+    "test_case": "Database connection establishment",
+    "expected": "Connection successful, query returns 1",
+    "actual": "Connection successful, query returned 1",
+    "status": "PASS"
+  },
+  {
+    "sr_no": 2,
+    "test_case": "Rooms table has all required fields (denormalized schema)",
+    "expected": "All required fields present: id, roomNumber, hostelName, blockName, floorNumber, capacity, occupied, rentPerSemester, isLocked, assignedUserId, assignedAt",
+    "actual": "All required fields present: False",
+    "status": "FAIL"
+  },
+  {
+    "sr_no": 3,
+    "test_case": "Query available rooms (occupied < capacity AND isLocked = false)",
+    "expected": "Returns count > 0 of available rooms",
+    "actual": "Found 7600 available rooms",
+    "status": "PASS"
+  },
+  {
+    "sr_no": 4,
+    "test_case": "Rooms table has rentPerSemester field (to be mapped to pricePerSemester)",
+    "expected": "rentPerSemester field exists in database",
+    "actual": "rentPerSemester field exists: False",
+    "status": "FAIL"
+  },
+  {
+    "sr_no": 5,
+    "test_case": "Preference table has required fields",
+    "expected": "Fields: id, userId, roomId, preferenceRank",
+    "actual": "All required fields present: True",
+    "status": "PASS"
+  },
+  {
+    "sr_no": 6,
+    "test_case": "User table has Firebase auth fields",
+    "expected": "Fields: id, firebaseUid, email, displayName",
+    "actual": "All Firebase fields present: True",
+    "status": "PASS"
+  },
+  {
+    "sr_no": 7,
+    "test_case": "CounsellingSession table structure",
+    "expected": "Fields: id, sessionName, sessionStatus, startTime",
+    "actual": "All session fields present: False",
+    "status": "FAIL"
+  },
+  {
+    "sr_no": 8,
+    "test_case": "Friendship table for friend requests",
+    "expected": "Fields: id, user1Id, user2Id, status",
+    "actual": "All friendship fields present: False",
+    "status": "FAIL"
+  },
+  {
+    "sr_no": 9,
+    "test_case": "Query locked rooms (isLocked = true)",
+    "expected": "Returns count of locked rooms",
+    "actual": "Found 0 locked rooms",
+    "status": "PASS"
+  },
+  {
+    "sr_no": 10,
+    "test_case": "Query full rooms (occupied >= capacity)",
+    "expected": "Returns count of full rooms",
+    "actual": "Found 0 full rooms",
+    "status": "PASS"
+  }
+]

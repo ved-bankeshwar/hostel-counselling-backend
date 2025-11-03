@@ -1,0 +1,107 @@
+[
+  {
+    "sr_no": 1,
+    "test_case": "API server accessibility",
+    "expected": "HTTP 200",
+    "actual": "HTTP 404",
+    "status": "FAIL"
+  },
+  {
+    "sr_no": 2,
+    "test_case": "GET /api/rooms/available - Fetch all available rooms",
+    "expected": "HTTP 200, list of rooms",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 3,
+    "test_case": "GET /api/rooms/available?hostelName=... - Filter by hostel",
+    "expected": "HTTP 200, filtered rooms",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 4,
+    "test_case": "GET /api/rooms/available?floorNumber=4 - Filter by floor",
+    "expected": "HTTP 200, floor 4 rooms",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 5,
+    "test_case": "GET /api/rooms/available?blockName=... - Filter by block",
+    "expected": "HTTP 200, block filtered",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 6,
+    "test_case": "GET /api/rooms/1 - Get specific room by ID",
+    "expected": "HTTP 200, room details",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 7,
+    "test_case": "GET /api/rooms/999999 - Non-existent room",
+    "expected": "HTTP 404",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 8,
+    "test_case": "GET /api/rooms/available?isAC=true - Filter AC rooms",
+    "expected": "HTTP 200, AC rooms",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 9,
+    "test_case": "GET /api/rooms/available?isDeluxe=true - Filter Deluxe",
+    "expected": "HTTP 200, deluxe rooms",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 10,
+    "test_case": "GET /api/rooms/available?isAC=true&isDeluxe=true - Multiple filters",
+    "expected": "HTTP 200, AC+Deluxe",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 11,
+    "test_case": "GET /api/allocation/session/current - Get session status",
+    "expected": "HTTP 200 or 404",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 12,
+    "test_case": "POST /api/allocation/session/start-test - Start session",
+    "expected": "HTTP 200, session created",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 13,
+    "test_case": "POST /api/allocation/session/start-test - Duplicate start",
+    "expected": "HTTP 400",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 14,
+    "test_case": "POST /api/allocation/session/stop-test - Stop session",
+    "expected": "HTTP 200, session stopped",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  },
+  {
+    "sr_no": 15,
+    "test_case": "GET /api/rooms/available?available=true - Explicit available filter",
+    "expected": "HTTP 200, available rooms",
+    "actual": "API not running - test not executed",
+    "status": "SKIP"
+  }
+]

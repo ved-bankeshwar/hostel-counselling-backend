@@ -1,19 +1,16 @@
 from fastapi import FastAPI, HTTPException, Body, status, Header, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from dbconfig import (
     counselling_session, 
     queue_management, 
-    roommate_approval, 
     preference, 
-    room_lock,
     friendship,
     user,
-    hostel,
-    block,
-    floor,
-    room,
-    room_assignment
+    room
 )
 from firebase_auth import router as firebase_auth_router, verify_firebase_token
 from friend_requests import router as friend_requests_router, get_user_by_firebase_uid
@@ -23,6 +20,15 @@ app = FastAPI(
     title="Hostel Room Counselling API",
     description="API for hostel room allocation system with dual-queue architecture and Firebase authentication",
     version="1.0.0"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include routers
@@ -64,65 +70,255 @@ class ApprovalRequest(BaseModel):
 
 @app.get("/api/hostels", tags=["Hostel"])
 def get_all_hostels():
-    """Get all hostels"""
+    """Get all hostels with room statistics"""
     try:
-        result = hostel.get_all_hostels()
+        result = room.get_all_hostels()
         return {"success": True, "data": result, "count": len(result)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/hostels/{hostel_id}", tags=["Hostel"])
-def get_hostel_by_id(hostel_id: int):
-    """Get hostel details by ID"""
+@app.get("/api/hostels/{hostel_name}", tags=["Hostel"])
+def get_hostel_by_name(hostel_name: str):
+    """Get hostel details by name with room statistics"""
     try:
-        result = hostel.get_hostel_by_id(hostel_id)
+        # Query aggregated hostel data from Rooms table
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                "hostelName" as name,
+                COUNT(*) as "totalRooms",
+                SUM("capacity") as "totalCapacity",
+                SUM("occupied") as "totalOccupied",
+                SUM("capacity" - "occupied") as "availableSlots"
+            FROM "Rooms"
+            WHERE "hostelName" = %s
+            GROUP BY "hostelName"
+        """
+        cursor.execute(query, (hostel_name,))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
         if not result:
             raise HTTPException(status_code=404, detail="Hostel not found")
-        return {"success": True, "data": result}
+        return {"success": True, "data": dict(result)}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/hostels/{hostel_id}/blocks", tags=["Hostel"])
-def get_hostel_blocks(hostel_id: int):
-    """Get all blocks in a hostel"""
+@app.get("/api/hostels/{hostel_name}/blocks", tags=["Hostel"])
+def get_hostel_blocks(hostel_name: str):
+    """Get all blocks in a hostel with room statistics"""
     try:
-        result = block.get_blocks_by_hostel_id(hostel_id)
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                "blockName" as name,
+                "hostelName",
+                COUNT(*) as "totalRooms",
+                SUM("capacity") as "totalCapacity",
+                SUM("occupied") as "totalOccupied",
+                SUM("capacity" - "occupied") as "availableSlots"
+            FROM "Rooms"
+            WHERE "hostelName" = %s
+            GROUP BY "blockName", "hostelName"
+            ORDER BY "blockName"
+        """
+        cursor.execute(query, (hostel_name,))
+        result = [dict(row) for row in cursor.fetchall()]
+        
+        cursor.close()
+        conn.close()
+        
         return {"success": True, "data": result, "count": len(result)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/blocks/{block_id}", tags=["Block"])
-def get_block_by_id(block_id: int):
-    """Get block details by ID"""
+@app.get("/api/blocks", tags=["Block"])
+def get_all_blocks(hostelName: Optional[str] = None):
+    """Get all blocks, optionally filtered by hostel name"""
     try:
-        result = block.get_block_by_id(block_id)
+        if hostelName:
+            # Use the helper function from room.py
+            result = room.get_blocks_by_hostel(hostelName)
+        else:
+            # Return all blocks grouped by hostel
+            conn = psycopg2.connect(**room.DB_CONFIG)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            query = """
+                SELECT DISTINCT 
+                    "blockName" as name,
+                    "hostelName",
+                    COUNT(*) as room_count,
+                    SUM("capacity") as total_capacity,
+                    SUM("occupied") as total_occupied,
+                    SUM("capacity" - "occupied") as available_slots
+                FROM "Rooms"
+                GROUP BY "blockName", "hostelName"
+                ORDER BY "hostelName", "blockName"
+            """
+            cursor.execute(query)
+            result = [dict(row) for row in cursor.fetchall()]
+            
+            cursor.close()
+            conn.close()
+        
+        return {"success": True, "data": result, "count": len(result)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/blocks/{hostel_name}/{block_name}", tags=["Block"])
+def get_block_details(hostel_name: str, block_name: str):
+    """Get block details by hostel and block name"""
+    try:
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                "blockName" as name,
+                "hostelName",
+                COUNT(*) as "totalRooms",
+                SUM("capacity") as "totalCapacity",
+                SUM("occupied") as "totalOccupied",
+                SUM("capacity" - "occupied") as "availableSlots"
+            FROM "Rooms"
+            WHERE "hostelName" = %s AND "blockName" = %s
+            GROUP BY "blockName", "hostelName"
+        """
+        cursor.execute(query, (hostel_name, block_name))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
         if not result:
             raise HTTPException(status_code=404, detail="Block not found")
-        return {"success": True, "data": result}
+        return {"success": True, "data": dict(result)}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/blocks/{block_id}/floors", tags=["Block"])
-def get_block_floors(block_id: int):
-    """Get all floors in a block"""
+@app.get("/api/floors", tags=["Floor"])
+def get_all_floors(hostelName: Optional[str] = None, blockName: Optional[str] = None):
+    """Get all floors, optionally filtered by hostel and/or block"""
     try:
-        result = floor.get_floors_by_block_id(block_id)
+        if hostelName and blockName:
+            # Use the helper function from room.py
+            result = room.get_floors_by_hostel_and_block(hostelName, blockName)
+        else:
+            # Build dynamic query based on filters
+            conn = psycopg2.connect(**room.DB_CONFIG)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            query = """
+                SELECT DISTINCT 
+                    "floorNumber" as number,
+                    "blockName",
+                    "hostelName",
+                    COUNT(*) as room_count,
+                    SUM("capacity") as total_capacity,
+                    SUM("occupied") as total_occupied,
+                    SUM("capacity" - "occupied") as available_slots
+                FROM "Rooms"
+            """
+            
+            conditions = []
+            params = []
+            
+            if hostelName:
+                conditions.append('"hostelName" = %s')
+                params.append(hostelName)
+            if blockName:
+                conditions.append('"blockName" = %s')
+                params.append(blockName)
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            
+            query += """
+                GROUP BY "floorNumber", "blockName", "hostelName"
+                ORDER BY "hostelName", "blockName", "floorNumber"
+            """
+            
+            cursor.execute(query, params)
+            result = [dict(row) for row in cursor.fetchall()]
+            
+            cursor.close()
+            conn.close()
+        
         return {"success": True, "data": result, "count": len(result)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/floors/{floor_id}", tags=["Floor"])
-def get_floor_by_id(floor_id: int):
-    """Get floor details by ID"""
+@app.get("/api/blocks/{hostel_name}/{block_name}/floors", tags=["Block"])
+def get_block_floors(hostel_name: str, block_name: str):
+    """Get all floors in a block with room statistics"""
     try:
-        result = floor.get_floor_by_id(floor_id)
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                "floorNumber" as number,
+                "blockName",
+                "hostelName",
+                COUNT(*) as "totalRooms",
+                SUM("capacity") as "totalCapacity",
+                SUM("occupied") as "totalOccupied",
+                SUM("capacity" - "occupied") as "availableSlots"
+            FROM "Rooms"
+            WHERE "hostelName" = %s AND "blockName" = %s
+            GROUP BY "floorNumber", "blockName", "hostelName"
+            ORDER BY "floorNumber"
+        """
+        cursor.execute(query, (hostel_name, block_name))
+        result = [dict(row) for row in cursor.fetchall()]
+        
+        cursor.close()
+        conn.close()
+        
+        return {"success": True, "data": result, "count": len(result)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/floors/{hostel_name}/{block_name}/{floor_number}", tags=["Floor"])
+def get_floor_details(hostel_name: str, block_name: str, floor_number: int):
+    """Get floor details by hostel, block, and floor number"""
+    try:
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                "floorNumber" as number,
+                "blockName",
+                "hostelName",
+                COUNT(*) as "totalRooms",
+                SUM("capacity") as "totalCapacity",
+                SUM("occupied") as "totalOccupied",
+                SUM("capacity" - "occupied") as "availableSlots"
+            FROM "Rooms"
+            WHERE "hostelName" = %s AND "blockName" = %s AND "floorNumber" = %s
+            GROUP BY "floorNumber", "blockName", "hostelName"
+        """
+        cursor.execute(query, (hostel_name, block_name, floor_number))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
         if not result:
             raise HTTPException(status_code=404, detail="Floor not found")
-        return {"success": True, "data": result}
+        return {"success": True, "data": dict(result)}
     except HTTPException:
         raise
     except Exception as e:
@@ -138,13 +334,39 @@ def get_floor_rooms(floor_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/rooms/available", tags=["Room"])
-def get_available_rooms():
-    """Get all available rooms with optional filters"""
+def get_available_rooms(
+    hostelName: Optional[str] = None,
+    blockName: Optional[str] = None,
+    floorNumber: Optional[int] = None,
+    isAC: Optional[bool] = None,
+    isDeluxe: Optional[bool] = None,
+    isApartment: Optional[bool] = None
+):
+    """Get all available rooms (where capacity > occupied) with optional filters"""
     try:
-        all_rooms = room.get_all_rooms()
-        # Filter for available rooms (is_available = True)
-        available = [r for r in all_rooms if r.get('isAvailable', False) or r.get('is_available', False)]
-        return {"success": True, "data": available, "count": len(available)}
+        # Build filters dict
+        filters = {'available': True, 'isLocked': False}
+        if hostelName:
+            filters['hostelName'] = hostelName
+        if blockName:
+            filters['blockName'] = blockName
+        if floorNumber is not None:
+            filters['floorNumber'] = floorNumber
+        if isAC is not None:
+            filters['isAC'] = isAC
+        if isDeluxe is not None:
+            filters['isDeluxe'] = isDeluxe
+        if isApartment is not None:
+            filters['isApartment'] = isApartment
+            
+        all_rooms = room.get_all_rooms(filters)
+        
+        # Map rentPerSemester to pricePerSemester for frontend compatibility
+        for room_data in all_rooms:
+            if 'rentPerSemester' in room_data:
+                room_data['pricePerSemester'] = room_data['rentPerSemester']
+        
+        return {"success": True, "data": all_rooms, "count": len(all_rooms)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -155,6 +377,11 @@ def get_room_by_id(room_id: int):
         result = room.get_room_by_id(room_id)
         if not result:
             raise HTTPException(status_code=404, detail="Room not found")
+        
+        # Map rentPerSemester to pricePerSemester for frontend compatibility
+        if 'rentPerSemester' in result:
+            result['pricePerSemester'] = result['rentPerSemester']
+        
         return {"success": True, "data": result}
     except HTTPException:
         raise
@@ -204,7 +431,13 @@ def get_user_preferences(user_id: int):
 def create_preference_endpoint(pref: PreferenceCreate):
     """Create a new preference"""
     try:
-        result = preference.create_preference(pref.dict())
+        # Map API fields (snake_case) to database fields (camelCase)
+        db_data = {
+            'userId': pref.user_id,
+            'preferenceRank': pref.priority,  # API uses 'priority', DB uses 'preferenceRank'
+            'roomId': pref.room_id
+        }
+        result = preference.create_preference(db_data)
         return {"success": True, "message": "Preference created", "data": result}
     except Exception as e:
         if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
@@ -349,53 +582,62 @@ def get_pending_approvals_endpoint(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/approvals", tags=["Approval"])
-def send_approval_request_endpoint(approval: ApprovalRequest):
-    """Send a roommate approval request"""
-    try:
-        result = roommate_approval.create_approval(approval.dict())
-        return {"success": True, "message": "Approval request sent", "data": result}
-    except Exception as e:
-        if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
-            raise HTTPException(status_code=400, detail="Approval request already exists")
-        raise HTTPException(status_code=500, detail=str(e))
+# ==================== DISABLED: Roommate Approval Endpoints ====================
+# These endpoints are disabled because RoommateApproval table was removed during denormalization
+# TODO: Reimplement if this feature is needed
 
-@app.put("/api/approvals/{approval_id}/approve", tags=["Approval"])
-def approve_request_endpoint(approval_id: int):
-    """Approve a roommate request"""
-    try:
-        result = roommate_approval.update_approval_status(approval_id, {"status": "approved"})
-        if not result:
-            raise HTTPException(status_code=404, detail="Approval not found")
-        return {"success": True, "message": "Request approved", "data": result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.post("/api/approvals", tags=["Approval"])
+# def send_approval_request_endpoint(approval: ApprovalRequest):
+#     """Send a roommate approval request - DISABLED"""
+#     raise HTTPException(status_code=501, detail="Roommate approval feature temporarily disabled")
 
-@app.put("/api/approvals/{approval_id}/reject", tags=["Approval"])
-def reject_request_endpoint(approval_id: int):
-    """Reject a roommate request"""
-    try:
-        result = roommate_approval.update_approval_status(approval_id, {"status": "rejected"})
-        if not result:
-            raise HTTPException(status_code=404, detail="Approval not found")
-        return {"success": True, "message": "Request rejected", "data": result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.put("/api/approvals/{approval_id}/approve", tags=["Approval"])
+# def approve_request_endpoint(approval_id: int):
+#     """Approve a roommate request - DISABLED"""
+#     raise HTTPException(status_code=501, detail="Roommate approval feature temporarily disabled")
+
+# @app.put("/api/approvals/{approval_id}/reject", tags=["Approval"])
+# def reject_request_endpoint(approval_id: int):
+#     """Reject a roommate request - DISABLED"""
+#     raise HTTPException(status_code=501, detail="Roommate approval feature temporarily disabled")
 
 # ==================== Room Assignment Endpoints ====================
+# NOTE: Room assignments are now handled through the Rooms table
+# assignedUserId, assignedAt fields in Rooms table
 
 @app.get("/api/assignments/{user_id}", tags=["Assignment"])
 def get_user_assignment(user_id: int):
     """Get room assignment for a user"""
     try:
-        result = room_assignment.get_room_assignments_by_user_id(user_id)
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                id as "roomId",
+                "roomNumber",
+                "floorNumber",
+                "blockName",
+                "hostelName",
+                "capacity",
+                "occupied",
+                "isAC",
+                "isDeluxe",
+                "isApartment",
+                "assignedUserId",
+                "assignedAt"
+            FROM "Rooms"
+            WHERE "assignedUserId" = %s
+        """
+        cursor.execute(query, (user_id,))
+        result = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
         if not result or len(result) == 0:
             raise HTTPException(status_code=404, detail="No assignment found for user")
-        return {"success": True, "data": result[0] if len(result) == 1 else result}
+        return {"success": True, "data": dict(result[0]) if len(result) == 1 else [dict(row) for row in result]}
     except HTTPException:
         raise
     except Exception as e:
@@ -403,10 +645,36 @@ def get_user_assignment(user_id: int):
 
 @app.get("/api/assignments/room/{room_id}", tags=["Assignment"])
 def get_room_assignments(room_id: int):
-    """Get all assignments for a room"""
+    """Get all users assigned to a room"""
     try:
-        result = room_assignment.get_room_assignments_by_room_id(room_id)
-        return {"success": True, "data": result, "count": len(result)}
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                id as "roomId",
+                "roomNumber",
+                "floorNumber",
+                "blockName",
+                "hostelName",
+                "assignedUserId",
+                "assignedAt",
+                "capacity",
+                "occupied"
+            FROM "Rooms"
+            WHERE id = %s
+        """
+        cursor.execute(query, (room_id,))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return {"success": True, "data": dict(result)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -656,26 +924,32 @@ def update_processing_queue_status(user_id: int, status: str):
 def remove_from_processing_queue(user_id: int):
     return queue_management.remove_from_processing_queue(user_id)
 
-# RoommateApproval Endpoints
-@app.post("/roommate-approval/")
-def send_roommate_approval(data: dict):
-    return roommate_approval.send_approval(data)
+# ==================== DEPRECATED ENDPOINTS ====================
+# The following endpoints are commented out because RoommateApproval and RoomLock 
+# tables have been removed during denormalization. Room locking is now handled
+# directly through the Rooms table (isLocked, lockedByUserId, lockExpiresAt fields).
 
-@app.post("/roommate-approval/{approval_id}/accept")
-def accept_roommate_approval(approval_id: int):
-    return roommate_approval.accept_approval(approval_id)
+# # RoommateApproval Endpoints (DISABLED - Table removed)
+# @app.post("/roommate-approval/")
+# def send_roommate_approval(data: dict):
+#     # TODO: Reimplement using new schema
+#     raise HTTPException(status_code=501, detail="Feature temporarily disabled during migration")
 
-@app.post("/roommate-approval/{approval_id}/reject")
-def reject_roommate_approval(approval_id: int):
-    return roommate_approval.reject_approval(approval_id)
+# @app.post("/roommate-approval/{approval_id}/accept")
+# def accept_roommate_approval(approval_id: int):
+#     raise HTTPException(status_code=501, detail="Feature temporarily disabled during migration")
 
-@app.get("/roommate-approval/{user_id}/status")
-def check_roommate_approval_status(user_id: int):
-    return roommate_approval.check_approval_status(user_id)
+# @app.post("/roommate-approval/{approval_id}/reject")
+# def reject_roommate_approval(approval_id: int):
+#     raise HTTPException(status_code=501, detail="Feature temporarily disabled during migration")
 
-@app.get("/roommate-approval/{user_id}/pending")
-def get_pending_roommate_approvals(user_id: int):
-    return roommate_approval.get_pending_approvals(user_id)
+# @app.get("/roommate-approval/{user_id}/status")
+# def check_roommate_approval_status(user_id: int):
+#     raise HTTPException(status_code=501, detail="Feature temporarily disabled during migration")
+
+# @app.get("/roommate-approval/{user_id}/pending")
+# def get_pending_roommate_approvals(user_id: int):
+#     raise HTTPException(status_code=501, detail="Feature temporarily disabled during migration")
 
 # Preference Endpoints
 @app.post("/preference/")
@@ -690,22 +964,177 @@ def update_preference(preference_id: int, data: dict):
 def get_user_preference(user_id: int):
     return preference.get_user_preference(user_id)
 
-# RoomLock Endpoints
+# RoomLock Endpoints - Now handled through Rooms table directly
 @app.post("/room-lock/")
 def lock_room(data: dict):
-    return room_lock.lock_room(data)
+    """Lock a room for a user"""
+    try:
+        room_id = data.get("roomId")
+        user_id = data.get("userId")
+        expires_at = data.get("expiresAt")
+        
+        if not room_id or not user_id:
+            raise HTTPException(status_code=400, detail="roomId and userId are required")
+        
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if room is already locked
+        check_query = 'SELECT "isLocked", "lockedByUserId" FROM "Rooms" WHERE id = %s'
+        cursor.execute(check_query, (room_id,))
+        room_data = cursor.fetchone()
+        
+        if not room_data:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        if room_data["isLocked"] and room_data["lockedByUserId"] != user_id:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=409, detail="Room is already locked by another user")
+        
+        # Lock the room
+        update_query = '''
+            UPDATE "Rooms" 
+            SET "isLocked" = true, 
+                "lockedByUserId" = %s, 
+                "lockedAt" = CURRENT_TIMESTAMP,
+                "lockExpiresAt" = %s
+            WHERE id = %s
+            RETURNING *
+        '''
+        cursor.execute(update_query, (user_id, expires_at, room_id))
+        result = cursor.fetchone()
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {"success": True, "message": "Room locked successfully", "data": dict(result)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/room-lock/{lock_id}/unlock")
-def unlock_room(lock_id: int):
-    return room_lock.unlock_room(lock_id)
+@app.post("/room-lock/{room_id}/unlock")
+def unlock_room(room_id: int, user_id: int = Body(..., embed=True)):
+    """Unlock a room"""
+    try:
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if room is locked by this user
+        check_query = 'SELECT "isLocked", "lockedByUserId" FROM "Rooms" WHERE id = %s'
+        cursor.execute(check_query, (room_id,))
+        room_data = cursor.fetchone()
+        
+        if not room_data:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        if not room_data["isLocked"]:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="Room is not locked")
+        
+        if room_data["lockedByUserId"] != user_id:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=403, detail="You don't have permission to unlock this room")
+        
+        # Unlock the room
+        update_query = '''
+            UPDATE "Rooms" 
+            SET "isLocked" = false, 
+                "lockedByUserId" = NULL, 
+                "lockedAt" = NULL,
+                "lockExpiresAt" = NULL
+            WHERE id = %s
+            RETURNING *
+        '''
+        cursor.execute(update_query, (room_id,))
+        result = cursor.fetchone()
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {"success": True, "message": "Room unlocked successfully", "data": dict(result)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/room-lock/{room_id}/status")
 def check_room_lock_status(room_id: int):
-    return room_lock.check_lock_status(room_id)
+    """Check if a room is locked"""
+    try:
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = '''
+            SELECT 
+                id as "roomId",
+                "roomNumber",
+                "isLocked",
+                "lockedByUserId",
+                "lockedAt",
+                "lockExpiresAt"
+            FROM "Rooms"
+            WHERE id = %s
+        '''
+        cursor.execute(query, (room_id,))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        return {"success": True, "data": dict(result)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/room-lock/{lock_id}")
-def remove_room_lock(lock_id: int):
-    return room_lock.remove_lock(lock_id)
+@app.delete("/room-lock/{room_id}")
+def remove_room_lock(room_id: int, user_id: int = Body(..., embed=True)):
+    """Forcefully remove a room lock (admin only)"""
+    # Note: This should ideally check for admin permissions
+    try:
+        conn = psycopg2.connect(**room.DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        update_query = '''
+            UPDATE "Rooms" 
+            SET "isLocked" = false, 
+                "lockedByUserId" = NULL, 
+                "lockedAt" = NULL,
+                "lockExpiresAt" = NULL
+            WHERE id = %s
+            RETURNING *
+        '''
+        cursor.execute(update_query, (room_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            conn.rollback()
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {"success": True, "message": "Room lock removed successfully", "data": dict(result)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== TEST ENDPOINT (REMOVE IN PRODUCTION) ====================

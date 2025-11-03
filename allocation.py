@@ -347,6 +347,17 @@ async def stop_allocation_session(authorization: str = Header(None)):
         if not session:
             raise HTTPException(status_code=404, detail="No active session found")
         
+        # Clear all preferences when session ends
+        cursor.execute('DELETE FROM "Preference"')
+        
+        # Reset all room assignments (clear assignedUserId and reset occupied count)
+        cursor.execute("""
+            UPDATE "Rooms"
+            SET "assignedUserId" = NULL,
+                "assignedAt" = NULL,
+                occupied = 0
+        """)
+        
         conn.commit()
         cursor.close()
         conn.close()
@@ -356,7 +367,7 @@ async def stop_allocation_session(authorization: str = Header(None)):
         
         return {
             "success": True,
-            "message": "Allocation session stopped"
+            "message": "Allocation session stopped. All preferences and room assignments cleared."
         }
         
     except HTTPException:
@@ -629,14 +640,10 @@ async def select_room_during_turn(
                 detail=f"Not your turn. Current rank: {session['currentRank']}, Your rank: {current_user['rank']}"
             )
         
-        # CHECK ROOM EXISTS AND IS AVAILABLE
+        # CHECK ROOM EXISTS AND IS AVAILABLE (using new denormalized Rooms table)
         cursor.execute("""
-            SELECT r.*, f."floorNumber", b."blockName", h.name as hostel_name
-            FROM "Room" r
-            JOIN "Floor" f ON r."floorId" = f.id
-            JOIN "Block" b ON f."blockId" = b.id
-            JOIN "Hostel" h ON b."hostelId" = h.id
-            WHERE r.id = %s AND r."isLocked" = false
+            SELECT * FROM "Rooms"
+            WHERE id = %s AND "isLocked" = false
         """, (request.roomId,))
         
         room = cursor.fetchone()
@@ -657,21 +664,19 @@ async def select_room_during_turn(
         
         preference = cursor.fetchone()
         
-        # CREATE ROOM ASSIGNMENT
+        # UPDATE ROOM TO MARK AS ASSIGNED (using new Rooms table)
+        # The new schema stores assignment info directly in Rooms table
         cursor.execute("""
-            INSERT INTO "RoomAssignment" ("userId", "roomId", "assignedAt")
-            VALUES (%s, %s, CURRENT_TIMESTAMP)
-            RETURNING *
+            UPDATE "Rooms"
+            SET occupied = occupied + 1,
+                "assignedUserId" = %s,
+                "assignedAt" = CURRENT_TIMESTAMP
+            WHERE id = %s
         """, (current_user['id'], request.roomId))
         
-        assignment = cursor.fetchone()
-        
-        # UPDATE ROOM OCCUPIED COUNT
-        cursor.execute("""
-            UPDATE "Room"
-            SET occupied = occupied + 1
-            WHERE id = %s
-        """, (request.roomId,))
+        # Fetch the updated room info to return
+        cursor.execute('SELECT * FROM "Rooms" WHERE id = %s', (request.roomId,))
+        updated_room = cursor.fetchone()
         
         # IMMEDIATELY MOVE TO NEXT RANK
         next_rank = session['currentRank'] + 1
@@ -700,9 +705,8 @@ async def select_room_during_turn(
             return {
                 "success": True,
                 "data": {
-                    "assignment": dict(assignment),
+                    "room": dict(updated_room),
                     "preference": dict(preference),
-                    "room": dict(room),
                     "sessionEnded": True
                 },
                 "message": "Room allocated successfully! Session completed."
@@ -729,9 +733,8 @@ async def select_room_during_turn(
             return {
                 "success": True,
                 "data": {
-                    "assignment": dict(assignment),
+                    "room": dict(updated_room),
                     "preference": dict(preference),
-                    "room": dict(room),
                     "nextRank": next_rank,
                     "sessionEnded": False
                 },
@@ -896,6 +899,18 @@ async def stop_allocation_session_test():
         )
         
         updated = dict(cursor.fetchone())
+        
+        # Clear all preferences when session ends
+        cursor.execute('DELETE FROM "Preference"')
+        
+        # Reset all room assignments (clear assignedUserId and reset occupied count)
+        cursor.execute("""
+            UPDATE "Rooms"
+            SET "assignedUserId" = NULL,
+                "assignedAt" = NULL,
+                occupied = 0
+        """)
+        
         conn.commit()
         
         # Stop auto-advance
@@ -907,7 +922,7 @@ async def stop_allocation_session_test():
         return {
             "success": True,
             "data": updated,
-            "message": "⚠️ TEST SESSION STOPPED - No authentication required",
+            "message": "⚠️ TEST SESSION STOPPED - No authentication required. All preferences and room assignments cleared.",
             "warning": "This endpoint should be removed in production"
         }
         
