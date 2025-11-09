@@ -347,15 +347,22 @@ async def stop_allocation_session(authorization: str = Header(None)):
         if not session:
             raise HTTPException(status_code=404, detail="No active session found")
         
+        # Clear all room assignments from RoomAssignments table
+        cursor.execute('DELETE FROM "RoomAssignments"')
+        
         # Clear all preferences when session ends
         cursor.execute('DELETE FROM "Preference"')
         
-        # Reset all room assignments (clear assignedUserId and reset occupied count)
+        # Reset all rooms (clear deprecated fields and reset occupied count)
         cursor.execute("""
             UPDATE "Rooms"
             SET "assignedUserId" = NULL,
                 "assignedAt" = NULL,
-                occupied = 0
+                occupied = 0,
+                "isLocked" = false,
+                "lockedByUserId" = NULL,
+                "lockedAt" = NULL,
+                "lockExpiresAt" = NULL
         """)
         
         conn.commit()
@@ -374,6 +381,84 @@ async def stop_allocation_session(authorization: str = Header(None)):
         cursor.close()
         conn.close()
         raise
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.post("/clear-all-allocations")
+async def clear_all_allocations(authorization: str = Header(None)):
+    """
+    Clear all room allocations and preferences (Admin only).
+    This does NOT stop the session, just clears all assignments.
+    
+    **Headers:**
+    - Authorization: Bearer <firebase_id_token>
+    
+    **Response:**
+    Returns success message with count of cleared items.
+    """
+    # Verify Firebase token and get user
+    decoded_token = await verify_firebase_token(authorization)
+    current_user = get_user_by_firebase_uid(decoded_token['uid'])
+    
+    if not current_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user is admin
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        # Count current assignments before clearing
+        cursor.execute('SELECT COUNT(*) as count FROM "RoomAssignments"')
+        assignments_count = cursor.fetchone()['count']
+        
+        cursor.execute('SELECT COUNT(*) as count FROM "Preference"')
+        preferences_count = cursor.fetchone()['count']
+        
+        # Clear all room assignments from RoomAssignments table
+        cursor.execute('DELETE FROM "RoomAssignments"')
+        
+        # Clear all preferences
+        cursor.execute('DELETE FROM "Preference"')
+        
+        # Reset room occupied counts and clear deprecated fields
+        cursor.execute("""
+            UPDATE "Rooms"
+            SET occupied = 0,
+                "assignedUserId" = NULL,
+                "assignedAt" = NULL
+        """)
+        
+        # Unlock all rooms
+        cursor.execute("""
+            UPDATE "Rooms"
+            SET "isLocked" = false,
+                "lockedByUserId" = NULL,
+                "lockedAt" = NULL,
+                "lockExpiresAt" = NULL
+        """)
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {
+            "success": True,
+            "message": "All allocations and preferences cleared successfully",
+            "data": {
+                "assignmentsCleared": assignments_count,
+                "preferencesCleared": preferences_count,
+                "roomsReset": True
+            }
+        }
+        
     except Exception as e:
         conn.rollback()
         cursor.close()
@@ -655,24 +740,42 @@ async def select_room_during_turn(
         if room['occupied'] >= room['capacity']:
             raise HTTPException(status_code=400, detail="Room is full")
         
-        # SAVE USER PREFERENCE (track what they selected)
+        # CHECK IF USER ALREADY HAS AN ASSIGNMENT
+        cursor.execute("""
+            SELECT * FROM "RoomAssignments" WHERE "userId" = %s
+        """, (current_user['id'],))
+        
+        existing_assignment = cursor.fetchone()
+        
+        if existing_assignment:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"You have already been assigned to a room (Room ID: {existing_assignment['roomId']})"
+            )
+        
+        # SAVE USER PREFERENCE (track what they selected) - use ON CONFLICT to handle duplicates
         cursor.execute("""
             INSERT INTO "Preference" ("userId", "preferenceRank", "roomId", "createdAt")
             VALUES (%s, 1, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT ("userId", "preferenceRank") 
+            DO UPDATE SET "roomId" = EXCLUDED."roomId", "createdAt" = CURRENT_TIMESTAMP
             RETURNING *
         """, (current_user['id'], request.roomId))
         
         preference = cursor.fetchone()
         
-        # UPDATE ROOM TO MARK AS ASSIGNED (using new Rooms table)
-        # The new schema stores assignment info directly in Rooms table
+        # INSERT INTO RoomAssignments table (supports multiple users per room)
+        cursor.execute("""
+            INSERT INTO "RoomAssignments" ("roomId", "userId", "assignedAt")
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+        """, (request.roomId, current_user['id']))
+        
+        # UPDATE ROOM occupied count
         cursor.execute("""
             UPDATE "Rooms"
-            SET occupied = occupied + 1,
-                "assignedUserId" = %s,
-                "assignedAt" = CURRENT_TIMESTAMP
+            SET occupied = occupied + 1
             WHERE id = %s
-        """, (current_user['id'], request.roomId))
+        """, (request.roomId,))
         
         # Fetch the updated room info to return
         cursor.execute('SELECT * FROM "Rooms" WHERE id = %s', (request.roomId,))

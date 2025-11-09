@@ -361,11 +361,6 @@ def get_available_rooms(
             
         all_rooms = room.get_all_rooms(filters)
         
-        # Map rentPerSemester to pricePerSemester for frontend compatibility
-        for room_data in all_rooms:
-            if 'rentPerSemester' in room_data:
-                room_data['pricePerSemester'] = room_data['rentPerSemester']
-        
         return {"success": True, "data": all_rooms, "count": len(all_rooms)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -377,10 +372,6 @@ def get_room_by_id(room_id: int):
         result = room.get_room_by_id(room_id)
         if not result:
             raise HTTPException(status_code=404, detail="Room not found")
-        
-        # Map rentPerSemester to pricePerSemester for frontend compatibility
-        if 'rentPerSemester' in result:
-            result['pricePerSemester'] = result['rentPerSemester']
         
         return {"success": True, "data": result}
     except HTTPException:
@@ -602,8 +593,7 @@ def get_pending_approvals_endpoint(user_id: int):
 #     raise HTTPException(status_code=501, detail="Roommate approval feature temporarily disabled")
 
 # ==================== Room Assignment Endpoints ====================
-# NOTE: Room assignments are now handled through the Rooms table
-# assignedUserId, assignedAt fields in Rooms table
+# NOTE: Room assignments are now handled through the RoomAssignments table
 
 @app.get("/api/assignments/{user_id}", tags=["Assignment"])
 def get_user_assignment(user_id: int):
@@ -614,30 +604,30 @@ def get_user_assignment(user_id: int):
         
         query = """
             SELECT 
-                id as "roomId",
-                "roomNumber",
-                "floorNumber",
-                "blockName",
-                "hostelName",
-                "capacity",
-                "occupied",
-                "isAC",
-                "isDeluxe",
-                "isApartment",
-                "assignedUserId",
-                "assignedAt"
-            FROM "Rooms"
-            WHERE "assignedUserId" = %s
+                r.id as "roomId",
+                r."roomNumber",
+                r."floorNumber",
+                r."blockName",
+                r."hostelName",
+                r."capacity",
+                r."occupied",
+                r."isAC",
+                r."isDeluxe",
+                r."isApartment",
+                ra."assignedAt"
+            FROM "RoomAssignments" ra
+            JOIN "Rooms" r ON ra."roomId" = r.id
+            WHERE ra."userId" = %s
         """
         cursor.execute(query, (user_id,))
-        result = cursor.fetchall()
+        result = cursor.fetchone()
         
         cursor.close()
         conn.close()
         
-        if not result or len(result) == 0:
+        if not result:
             raise HTTPException(status_code=404, detail="No assignment found for user")
-        return {"success": True, "data": dict(result[0]) if len(result) == 1 else [dict(row) for row in result]}
+        return {"success": True, "data": dict(result)}
     except HTTPException:
         raise
     except Exception as e:
@@ -652,17 +642,25 @@ def get_room_assignments(room_id: int):
         
         query = """
             SELECT 
-                id as "roomId",
-                "roomNumber",
-                "floorNumber",
-                "blockName",
-                "hostelName",
-                "assignedUserId",
-                "assignedAt",
-                "capacity",
-                "occupied"
-            FROM "Rooms"
-            WHERE id = %s
+                r.id as "roomId",
+                r."roomNumber",
+                r."floorNumber",
+                r."blockName",
+                r."hostelName",
+                r."capacity",
+                r."occupied",
+                json_agg(json_build_object(
+                    'userId', u.id,
+                    'name', u.name,
+                    'email', u.email,
+                    'rank', u.rank,
+                    'assignedAt', ra."assignedAt"
+                )) as "assignedUsers"
+            FROM "Rooms" r
+            LEFT JOIN "RoomAssignments" ra ON r.id = ra."roomId"
+            LEFT JOIN "User" u ON ra."userId" = u.id
+            WHERE r.id = %s
+            GROUP BY r.id, r."roomNumber", r."floorNumber", r."blockName", r."hostelName", r."capacity", r."occupied"
         """
         cursor.execute(query, (room_id,))
         result = cursor.fetchone()
