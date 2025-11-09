@@ -1,4 +1,6 @@
 ﻿import os
+import json
+import base64
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 from fastapi import APIRouter, HTTPException, Header
@@ -10,18 +12,41 @@ from psycopg2.extras import RealDictCursor
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # Initialize Firebase Admin SDK
-service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "serviceAccountKey.json")
+def get_firebase_credentials():
+    """Get Firebase credentials from environment or file"""
+    # Check for Base64 encoded service account (for Render/production)
+    service_account_base64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_BASE64")
+    
+    if service_account_base64:
+        try:
+            # Decode Base64 string to JSON
+            service_account_json = base64.b64decode(service_account_base64).decode('utf-8')
+            service_account_dict = json.loads(service_account_json)
+            print("[OK] Using Firebase credentials from FIREBASE_SERVICE_ACCOUNT_BASE64 environment variable")
+            return credentials.Certificate(service_account_dict)
+        except Exception as e:
+            print(f"[ERROR] Failed to decode FIREBASE_SERVICE_ACCOUNT_BASE64: {e}")
+            raise
+    
+    # Fallback to file path (for local development)
+    service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "serviceAccountKey.json")
+    if os.path.exists(service_account_path):
+        print(f"[OK] Using Firebase credentials from file: {service_account_path}")
+        return credentials.Certificate(service_account_path)
+    
+    raise FileNotFoundError("Firebase service account not found. Set FIREBASE_SERVICE_ACCOUNT_BASE64 or provide serviceAccountKey.json")
 
 try:
     firebase_admin.get_app()
     print("[OK] Firebase Admin SDK already initialized")
 except ValueError:
     try:
-        cred = credentials.Certificate(service_account_path)
+        cred = get_firebase_credentials()
         firebase_admin.initialize_app(cred)
-        print(f"[OK] Firebase Admin SDK initialized from {service_account_path}")
+        print("[OK] Firebase Admin SDK initialized successfully")
     except Exception as e:
         print(f"[ERROR] Firebase Admin SDK initialization failed: {e}")
+        print("[WARNING] Some authentication features may not work")
 
 # Pydantic models
 class FirebaseLoginRequest(BaseModel):
