@@ -3,17 +3,34 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Optional, List, Dict, Any
-import sys
 import os
 
-# Add parent directory to path to import config
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import DB_CONFIG
-
+def get_db_config():
+    """Get database configuration from environment variables"""
+    database_url = os.getenv("DATABASE_URL")
+    
+    if database_url:
+        from urllib.parse import urlparse
+        result = urlparse(database_url)
+        return {
+            "host": result.hostname,
+            "database": result.path[1:],
+            "user": result.username,
+            "password": result.password,
+            "port": result.port or 5432
+        }
+    else:
+        return {
+            "host": os.getenv("DB_HOST", "localhost"),
+            "database": os.getenv("DB_NAME", "room_counselling"),
+            "user": os.getenv("DB_USER", "admin"),
+            "password": os.getenv("DB_PASSWORD", "admin123"),
+            "port": int(os.getenv("DB_PORT", "5432"))
+        }
 
 def get_connection():
     """Create and return a database connection."""
-    return psycopg2.connect(**DB_CONFIG)
+    return psycopg2.connect(**get_db_config())
 
 
 def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
