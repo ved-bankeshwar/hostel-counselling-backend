@@ -1,15 +1,12 @@
 ﻿import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Optional, Dict, List, Any
+import sys
+import os
 
-# Database configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "database": "room_counselling",
-    "user": "admin",
-    "password": "admin123",
-    "port": 5432
-}
+# Add parent directory to path to import config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import DB_CONFIG
 
 def get_connection():
     """Create and return a database connection"""

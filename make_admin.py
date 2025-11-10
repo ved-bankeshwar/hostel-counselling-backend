@@ -2,14 +2,7 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import sys
-
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'room_counselling',
-    'user': 'admin',
-    'password': 'admin123'
-}
+from config import DB_CONFIG
 
 def make_admin(identifier: str, by_email: bool = True):
     """Make a user admin by email or ID."""

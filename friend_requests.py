@@ -7,15 +7,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from firebase_auth import verify_firebase_token
-
-# Database connection parameters
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'room_counselling',
-    'user': 'admin',
-    'password': 'admin123'
-}
+from config import DB_CONFIG
 
 router = APIRouter(prefix="/api", tags=["Friends"])
 
