@@ -27,7 +27,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # Local development
-        "https://hostel-counselling-frontend.vercel.app/",  # Add your Vercel URL here
+        "http://localhost:5173",  # Vite local
+        "https://hostel-counselling-frontend.vercel.app",  # Production (no trailing slash)
+        "*"  # Allow all origins temporarily for testing
     ],
     allow_credentials=True,
     allow_methods=["*"],
