@@ -198,3 +198,95 @@ def get_users_by_rank_range(min_rank: int, max_rank: int) -> List[Dict[str, Any]
     finally:
         conn.close()
 
+
+def allocate_room_to_user(user_id: int, room_id: int) -> Dict[str, Any]:
+    """Allocate a room to a user by updating the User table."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            UPDATE "User"
+            SET "allocatedRoomId" = %s,
+                "allocatedAt" = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING *
+            """,
+            (room_id, user_id)
+        )
+        user = dict(cursor.fetchone())
+        conn.commit()
+        cursor.close()
+        return user
+    except Exception as e:
+        conn.rollback()
+        raise Exception(f"Error allocating room to user: {str(e)}")
+    finally:
+        conn.close()
+
+
+def clear_user_room_allocation(user_id: int) -> Dict[str, Any]:
+    """Clear room allocation from a user."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            UPDATE "User"
+            SET "allocatedRoomId" = NULL,
+                "allocatedAt" = NULL
+            WHERE id = %s
+            RETURNING *
+            """,
+            (user_id,)
+        )
+        user = dict(cursor.fetchone())
+        conn.commit()
+        cursor.close()
+        return user
+    except Exception as e:
+        conn.rollback()
+        raise Exception(f"Error clearing room allocation: {str(e)}")
+    finally:
+        conn.close()
+
+
+def get_users_with_allocated_rooms() -> List[Dict[str, Any]]:
+    """Get all users who have been allocated a room."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            SELECT u.*, r."roomNumber", r."hostelName", r."blockName", r."floorNumber"
+            FROM "User" u
+            LEFT JOIN "Rooms" r ON u."allocatedRoomId" = r.id
+            WHERE u."allocatedRoomId" IS NOT NULL
+            ORDER BY u.rank ASC
+            """
+        )
+        users = [dict(row) for row in cursor.fetchall()]
+        cursor.close()
+        return users
+    except Exception as e:
+        raise Exception(f"Error fetching users with allocated rooms: {str(e)}")
+    finally:
+        conn.close()
+
+
+def get_users_without_allocated_rooms() -> List[Dict[str, Any]]:
+    """Get all users who have NOT been allocated a room yet."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            'SELECT * FROM "User" WHERE "allocatedRoomId" IS NULL AND rank > 0 ORDER BY rank ASC'
+        )
+        users = [dict(row) for row in cursor.fetchall()]
+        cursor.close()
+        return users
+    except Exception as e:
+        raise Exception(f"Error fetching users without allocated rooms: {str(e)}")
+    finally:
+        conn.close()
+

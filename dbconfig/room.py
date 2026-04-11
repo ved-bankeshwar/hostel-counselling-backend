@@ -395,3 +395,115 @@ def unlock_room(room_id: int, user_id: Optional[int] = None) -> Optional[Dict]:
         raise Exception(f"Error unlocking room: {str(e)}")
     finally:
         conn.close()
+
+
+def get_room_with_allocated_users(room_id: int) -> Optional[Dict]:
+    """Get room details with list of all allocated users"""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get room details
+        cursor.execute('SELECT * FROM "Rooms" WHERE id = %s', (room_id,))
+        room = cursor.fetchone()
+        
+        if not room:
+            cursor.close()
+            conn.close()
+            return None
+        
+        room_dict = dict(room)
+        
+        # Get all users allocated to this room
+        cursor.execute("""
+            SELECT u.id, u.name, u.email, u."registrationNumber", u.rank, u."allocatedAt"
+            FROM "User" u
+            WHERE u."allocatedRoomId" = %s
+            ORDER BY u."allocatedAt" ASC
+        """, (room_id,))
+        
+        allocated_users = [dict(row) for row in cursor.fetchall()]
+        room_dict['allocatedUsers'] = allocated_users
+        
+        cursor.close()
+        return room_dict
+    except Exception as e:
+        raise Exception(f"Error fetching room with allocated users: {str(e)}")
+    finally:
+        conn.close()
+
+
+def get_all_rooms_with_allocations() -> List[Dict]:
+    """Get all rooms with their allocated users"""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get all rooms
+        cursor.execute("""
+            SELECT * FROM "Rooms"
+            ORDER BY "hostelName", "blockName", "floorNumber", "roomNumber"
+        """)
+        rooms = [dict(row) for row in cursor.fetchall()]
+        
+        # For each room, get allocated users
+        for room in rooms:
+            cursor.execute("""
+                SELECT u.id, u.name, u.email, u."registrationNumber", u.rank, u."allocatedAt"
+                FROM "User" u
+                WHERE u."allocatedRoomId" = %s
+                ORDER BY u."allocatedAt" ASC
+            """, (room['id'],))
+            
+            room['allocatedUsers'] = [dict(row) for row in cursor.fetchall()]
+        
+        cursor.close()
+        return rooms
+    except Exception as e:
+        raise Exception(f"Error fetching rooms with allocations: {str(e)}")
+    finally:
+        conn.close()
+
+
+def increment_room_occupancy(room_id: int) -> Optional[Dict]:
+    """Increment the occupied count for a room"""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            UPDATE "Rooms"
+            SET occupied = occupied + 1
+            WHERE id = %s
+            RETURNING *
+        """, (room_id,))
+        room = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        return dict(room) if room else None
+    except Exception as e:
+        conn.rollback()
+        raise Exception(f"Error incrementing room occupancy: {str(e)}")
+    finally:
+        conn.close()
+
+
+def decrement_room_occupancy(room_id: int) -> Optional[Dict]:
+    """Decrement the occupied count for a room"""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            UPDATE "Rooms"
+            SET occupied = GREATEST(occupied - 1, 0)
+            WHERE id = %s
+            RETURNING *
+        """, (room_id,))
+        room = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        return dict(room) if room else None
+    except Exception as e:
+        conn.rollback()
+        raise Exception(f"Error decrementing room occupancy: {str(e)}")
+    finally:
+        conn.close()

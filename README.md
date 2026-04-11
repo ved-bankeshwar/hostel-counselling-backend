@@ -1,3 +1,209 @@
+## Hostel Counselling — Backend
+
+This repository contains the backend service for the "Hostel Counselling" application: a system for managing student room counselling and allocation. The backend is written in Python (FastAPI) and exposes REST endpoints used by the frontend to manage sessions, preferences, friends, and the allocation workflow.
+
+---
+
+## Table of Contents
+
+- Project overview
+- Key features
+- Architecture & major components
+- Data model & migrations
+- Local development (Windows / PowerShell)
+- Running in Docker
+- API highlights (important endpoints)
+- Admin & allocation workflow
+- Scripts and utilities
+- Troubleshooting
+- Contributing
+- License
+
+---
+
+## Project overview
+
+This backend implements the room counselling (allocation) system which supports:
+
+- Firebase authentication integration for users
+- Friend-request management and friendship relations
+- Preference submission for rooms and roommates per counselling session
+- A session-based allocation system (with auto-advance across ranks)
+- Room, hostels, blocks and floors metadata and reporting endpoints
+- Admin routes to start/stop allocation sessions and clear assignments
+
+The service uses FastAPI to provide a JSON API and PostgreSQL as the primary database.
+
+## Key features
+
+- FastAPI-based REST API (high-performance, asynchronous-compatible)
+- Firebase auth integration (server verifies ID tokens from client)
+- Counselling sessions with rank-based turns and automatic advancement
+- Persistent storage of rooms, users, preferences, room assignments (Postgres)
+- Migration SQLs included to initialize and evolve the schema
+- Utilities and PowerShell scripts to ease local development on Windows
+
+## Architecture & major components
+
+- `api.py` — FastAPI app initialization, CORS configuration and top-level routers. This file wires together the `firebase_auth`, `friend_requests`, and `allocation` routers and provides many read-only endpoints for hostels, blocks, floors and rooms.
+- `allocation.py` — Allocation-related endpoints and the auto-advance background manager that advances the counselling session by rank over time. It also exposes endpoints to start/stop sessions and clear assignments.
+- `firebase_auth.py` — Router and helper functions for Firebase token verification and user creation/lookup (used by the frontend for login flows).
+- `friend_requests.py` — Router handling friend requests and friend-related operations used by the frontend social workflows.
+- `dbconfig/` — A package containing modules that encapsulate DB logic for domain entities:
+  - `user.py`, `room.py`, `preference.py`, `counselling_session.py`, `friendship.py`, `queue_management.py` — helper functions and CRUD operations to interact with the Postgres DB.
+- `migrations/` — SQL files used to set up and evolve the database schema. See the folder for the initial schema and later incremental changes.
+
+## Data model & migrations
+
+The project includes SQL-based migrations under `migrations/`. Examples found in the repository:
+
+- `000_initial_schema.sql` — base tables (users, rooms, etc.)
+- `001_add_counselling_system.sql` — adds counselling session related tables
+- `002_add_firebase_auth.sql` — adds schema changes for Firebase integration
+- `...` — subsequent migration scripts named sequentially up to `007`
+
+Use those SQL files (or the included helper scripts) to create the database schema before running the service.
+
+## Local development (Windows / PowerShell)
+
+Prerequisites:
+
+- Python 3.10+ (or compatible 3.11)
+- PostgreSQL instance (local or remote)
+- PowerShell (Windows provided) — repository includes convenience scripts
+- A Firebase service account JSON (for server-side verification; see `serviceAccountKey.json` placeholder)
+
+Recommended local steps (PowerShell):
+
+```powershell
+# 1. create a virtual environment
+python -m venv .venv
+
+# 2. activate it (PowerShell)
+. .\.venv\Scripts\Activate.ps1
+
+# 3. install dependencies
+pip install -r requirements.txt
+
+# 4. set environment variables (example)
+$env:DB_HOST='localhost'
+$env:DB_PORT='5432'
+$env:DB_NAME='room_counselling'
+$env:DB_USER='admin'
+$env:DB_PASSWORD='admin123'
+# Provide path to your Firebase service account key (or put file at repo root named serviceAccountKey.json)
+$env:FIREBASE_CREDENTIALS='c:\path\to\serviceAccountKey.json'
+
+# 5. initialize DB using migrations or helper scripts (see scripts in repo)
+# There are PowerShell helper scripts: run_migrations_local.ps1, run_migration_007.ps1, etc.
+
+# 6. run the backend (development)
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+```
+
+Notes:
+
+- The repository includes convenience scripts (`run_local.ps1`, `setup_local.ps1`) which may automate some setup steps on Windows. Inspect them before running.
+- If using Docker (see next section) you can avoid installing Python locally.
+
+## Running in Docker
+
+There is a `Dockerfile` included for containerized runs. A minimal example to build and run locally:
+
+```powershell
+# Build
+docker build -t hostel-counselling-backend .
+
+# Run (example) - provide env vars or mount in a .env file
+docker run -e DB_HOST=host.docker.internal -e DB_NAME=room_counselling -e DB_USER=admin -e DB_PASSWORD=admin123 -p 8000:8000 hostel-counselling-backend
+```
+
+Adjust database connectivity when running from Docker (host.docker.internal or networked Postgres).
+
+## API highlights
+
+The backend exposes many endpoints. Key ones include (non-exhaustive):
+
+- GET `/api/hostels` — list hostels and aggregated room stats
+- GET `/api/hostels/{hostelName}` — get a hostel's aggregated stats
+- GET `/api/blocks`, `/api/blocks/{hostel}/{block}/floors`, etc. — hierarchical room metadata
+- GET `/api/rooms/available` — list available rooms with filters (AC/deluxe/apartment etc.)
+
+Allocation-specific endpoints (prefix `/api/allocation`):
+
+- GET `/api/allocation/session/current` — get current allocation session status
+- POST `/api/allocation/session/start` — start a new allocation session (admin-only)
+- POST `/api/allocation/session/stop` — stop the active session (admin-only)
+- POST `/api/allocation/clear-all-allocations` — clear assignments and preferences (admin-only)
+
+Authentication:
+
+- Routes expect Firebase ID tokens in an `Authorization: Bearer <token>` header for protected routes. The backend verifies tokens using the Firebase admin credentials.
+
+For the full list of endpoints, consult `api.py`, `allocation.py`, `friend_requests.py`, and the router docstrings. When running the server locally with `--reload`, FastAPI will provide interactive docs at `http://localhost:8000/docs`.
+
+## Admin & allocation workflow
+
+- Admins start a counselling session via the allocation endpoint. That creates a session row and a background task (`AllocationAutoAdvance`) which advances user ranks automatically based on a configured `timePerRank` value.
+- When the session ends, the service resets preferences and room assignments (depending on the endpoint used) so a fresh allocation cycle can begin.
+
+Important behaviors:
+
+- Auto-advance checks the session's `turnStartTime` against the configured `turnDuration` and advances to the next rank when appropriate.
+- Starting a session requires admin role checks (Firebase-authenticated user whose role is `admin`).
+
+## Scripts and utilities
+
+- `run_local.ps1` — helper to run the backend locally (inspect before use)
+- `setup_local.ps1` — local setup helper
+- `run_migrations_local.ps1`, `run_migration_007.ps1`, `run_migration_007.ps1` — helpers to apply SQL migrations
+- `make_admin.py` — convenience script to create an admin user (use with care)
+
+There are also PowerShell helper scripts for converting Firebase data to base64, testing, and migration helpers.
+
+## Frontend integration
+
+The frontend repository lives in the sibling folder `hostel-counselling-frontend`. The frontend uses the API endpoints described above and communicates using Firebase authentication tokens. Typical frontend flow:
+
+1. User signs in with Firebase (client).  
+2. Client sends ID token to backend in `Authorization` header.  
+3. Backend verifies token and uses or creates a user record, then serves protected endpoints.
+
+When deploying frontend (for example to Vercel), remember to configure the frontend to point to the backend URL and ensure CORS settings are updated accordingly.
+
+## Troubleshooting
+
+- Database connection errors: confirm PostgreSQL is reachable and `DB_*` env vars are set correctly.
+- Firebase verification failing: ensure `serviceAccountKey.json` is present and the `FIREBASE_CREDENTIALS` env points to it.
+- Port conflicts: the default dev port is 8000 — change with `--port` or in Docker mapping.
+- If you encounter unexpected behavior in allocation sessions, check database tables `CounsellingSession`, `User`, `RoomAssignments`, and logs from the background auto-advance task.
+
+## Contributing
+
+Contributions are welcome. Good first steps:
+
+1. Open an issue describing the change or fix.  
+2. Create a branch from `main` and submit a PR.  
+3. Keep changes small and add unit tests where reasonable.
+
+Coding conventions:
+
+- Python code follows existing project style; keep new modules small and testable.
+- Put DB logic inside `dbconfig/` modules where appropriate.
+
+## License
+
+This repository does not currently include a license file. Add one (e.g. MIT) if you plan to make the project public.
+
+---
+
+If you'd like, I can also:
+
+- Add a short `README` to the frontend explaining how to connect to this backend.  
+- Create a sample `.env.example` with the recommended environment variables.  
+- Add a lightweight smoke test that starts the app and hits `/api/hostels`.
+
+If you want any of those, tell me which and I'll add them next.
 # Hostel Counselling Backend# Hostel Counselling Backend# Hostel Counselling Backend
 
 

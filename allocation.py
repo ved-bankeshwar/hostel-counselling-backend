@@ -428,6 +428,13 @@ async def clear_all_allocations(authorization: str = Header(None)):
         # Clear all preferences
         cursor.execute('DELETE FROM "Preference"')
         
+        # Clear allocated room from User table
+        cursor.execute("""
+            UPDATE "User"
+            SET "allocatedRoomId" = NULL,
+                "allocatedAt" = NULL
+        """)
+        
         # Reset room occupied counts and clear deprecated fields
         cursor.execute("""
             UPDATE "Rooms"
@@ -768,6 +775,14 @@ async def select_room_during_turn(
         cursor.execute("""
             INSERT INTO "RoomAssignments" ("roomId", "userId", "assignedAt")
             VALUES (%s, %s, CURRENT_TIMESTAMP)
+        """, (request.roomId, current_user['id']))
+        
+        # UPDATE USER with allocated room info
+        cursor.execute("""
+            UPDATE "User"
+            SET "allocatedRoomId" = %s,
+                "allocatedAt" = CURRENT_TIMESTAMP
+            WHERE id = %s
         """, (request.roomId, current_user['id']))
         
         # UPDATE ROOM occupied count

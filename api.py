@@ -15,6 +15,11 @@ from dbconfig import (
 from firebase_auth import router as firebase_auth_router, verify_firebase_token
 from friend_requests import router as friend_requests_router, get_user_by_firebase_uid
 from allocation import router as allocation_router
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env.local if it exists
+load_dotenv(".env.local")
 
 app = FastAPI(
     title="Hostel Room Counselling API",
@@ -514,20 +519,10 @@ async def lock_user_preferences(token_data: dict = Depends(verify_firebase_token
 def get_user_approvals(user_id: int):
     """Get all approvals for a user (simplified version)"""
     try:
-        # Query the database directly with corrected SQL
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-        
-        conn = psycopg2.connect(
-            host='localhost',
-            port=5432,
-            database='room_counselling',
-            user='admin',
-            password='admin123'
-        )
+        # Get requests where user is the requester
+        conn = psycopg2.connect(**room.DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Get requests where user is the requester
         cursor.execute(
             'SELECT * FROM "RoommateApproval" WHERE "requesterId" = %s ORDER BY "requestedAt" DESC',
             (user_id,)
@@ -553,16 +548,7 @@ def get_pending_approvals_endpoint(user_id: int):
     """Get pending approvals for a user"""
     try:
         # Query the database directly with corrected SQL
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-        
-        conn = psycopg2.connect(
-            host='localhost',
-            port=5432,
-            database='room_counselling',
-            user='admin',
-            password='admin123'
-        )
+        conn = psycopg2.connect(**room.DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute(

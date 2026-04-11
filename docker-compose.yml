@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: hostel-db
+    restart: always
+    environment:
+      - POSTGRES_DB=room_counselling
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d # Run migrations on startup
+
+  app:
+    build: .
+    container_name: hostel-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=room_counselling
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - FIREBASE_SERVICE_ACCOUNT_PATH=/app/serviceAccountKey.json # Assuming it's copied in Dockerfile
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
